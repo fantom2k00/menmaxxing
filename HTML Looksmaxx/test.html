@@ -1,0 +1,206 @@
+
+<html>
+<head>
+  <script type="module">
+    import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+    
+    const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
+    const demosSection = document.getElementById("demos");
+    const imageBlendShapes = document.getElementById("image-blend-shapes");
+    const videoBlendShapes = document.getElementById("video-blend-shapes");
+    let faceLandmarker;
+    let runningMode = "IMAGE";
+    let webcamRunning = false;
+    const videoWidth = 360;
+    const video = document.getElementById("webcam");
+    const canvasElement = document.getElementById("output_canvas");
+    const canvasCtx = canvasElement.getContext("2d");
+
+    async function createFaceLandmarker() {
+        const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+            baseOptions: {
+                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                delegate: "GPU"
+            },
+            outputFaceBlendshapes: true,
+            runningMode,
+            numFaces: 1
+        });
+        demosSection.classList.remove("invisible");
+        console.log("fffffffffff");
+    }
+    createFaceLandmarker();
+    let loadLandmaker = function() {
+        setTimeout(function () {
+            if (!faceLandmarker)
+                loadLandmaker();
+            else {
+                console.log("cLANGUGAGE");
+                enableCam();
+            }
+        }, 100);
+    };
+
+    function hasGetUserMedia() {
+        return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    }
+    if (hasGetUserMedia()) {
+        loadLandmaker();
+        enableCam();
+    }
+    else {
+        alert("Browser not supported!");
+    }
+    function enableCam(event) {
+        if (!faceLandmarker) {
+            console.log("Wait! faceLandmarker not loaded yet.");
+            return;
+        }
+        if (webcamRunning === true) {
+            webcamRunning = false;
+        }
+        else {
+            webcamRunning = true;
+        }
+        const constraints = {
+            video: true
+        };
+        // Activate the webcam stream.
+        navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+            video.srcObject = stream;
+            video.addEventListener("loadeddata", predictWebcam);
+        });
+    }
+
+    function radiansToDegrees(radians) {
+        return radians * (180 / Math.PI);
+    }
+
+    function showAllLandmarks(landmarks) {
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: "#C0C0C070", lineWidth: 1 });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE, { color: "#FFFFFF" });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW, { color: "#FFFFFF" });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LEFT_EYE, { color: "#FFFFFF" });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW, { color: "#FFFFFF" });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_FACE_OVAL, { color: "#FFFFFF" });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LIPS, { color: "#FFFFFF" });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS, { color: "#FFFFFF" });
+        drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, { color: "#FFFFFF" });
+        return "";
+    }
+
+    function getFwhr(landmarks) {
+        drawingUtils.drawConnectors(landmarks, [{start: 164, end: 8}], { color: "#FF0000", lineWidth: 3 });
+        drawingUtils.drawConnectors(landmarks, [{start: 227, end: 447}], { color: "#FF0000", lineWidth: 3 });
+        const midface_height = Math.hypot(landmarks[164].x - landmarks[8].x, landmarks[164].y - landmarks[8].y);
+        const bizygomatic_width = Math.hypot(landmarks[227].x - landmarks[447].x, landmarks[227].y - landmarks[447].y);
+        const fwhr = bizygomatic_width/midface_height;
+        let rating = "MID";
+        if (fwhr < 1.65) {
+            rating = "WEAK";
+        } else if (fwhr > 1.85) {
+            rating = "STRONG";
+        }
+        return `
+        <li class="blend-shapes-item">
+            <span class="blend-shapes-label">Face Width to Height Ratio: ${fwhr.toFixed(3)} (${rating})</span>
+        </li>
+        `;
+    }
+
+    function getCanthalTilt(landmarks) {
+        drawingUtils.drawConnectors(landmarks, [{start: 33, end: 133}], { color: "#FF0000", lineWidth: 3 });
+        drawingUtils.drawConnectors(landmarks, [{start: 362, end: 263}], { color: "#FF0000", lineWidth: 3 });
+    
+        const eyel_dx = landmarks[133].x - landmarks[33].x;
+        const eyel_dy = landmarks[133].y - landmarks[33].y;
+        const eyel_tilt = radiansToDegrees(Math.atan2(eyel_dy, eyel_dx));
+
+        const eyer_dx = landmarks[263].x - landmarks[362].x;
+        const eyer_dy = landmarks[263].y - landmarks[362].y;
+        const eyer_tilt = - radiansToDegrees(Math.atan2(eyer_dy, eyer_dx));
+        
+        const canthal_tilt = 0.5 * (eyel_tilt + eyer_tilt);
+        let rating = "NEUTRAL";
+        if (canthal_tilt < -5) {
+            rating = "NEGATIVE";
+        } else if (canthal_tilt > 5) {
+            rating = "POSITIVE";
+        }
+        return `
+        <li class="blend-shapes-item">
+            <span class="blend-shapes-label">Canthal Tilt: ${canthal_tilt.toFixed(3)} (${rating})</span>
+        </li>
+        `;
+    }
+
+    function getEyeSeparationRatio(landmarks) {
+        drawingUtils.drawConnectors(landmarks, [{start: 468, end: 473}], { color: "#0000FF", lineWidth: 2 });
+        drawingUtils.drawConnectors(landmarks, [{start: 227, end: 447}], { color: "#0000FF", lineWidth: 2 });
+        const interpupillary_distance = Math.hypot(landmarks[468].x - landmarks[473].x, landmarks[468].y - landmarks[473].y);
+        const bizygomatic_width = Math.hypot(landmarks[227].x - landmarks[447].x, landmarks[227].y - landmarks[447].y);
+        const eye_separation_ratio = interpupillary_distance/bizygomatic_width;
+
+        let rating = "IDEAL";
+        if (eye_separation_ratio < 0.45) {
+            rating = "TOO LOW";
+        } else if (eye_separation_ratio > 0.47) {
+            rating = "TOO HIGH";
+        }
+        return `
+        <li class="blend-shapes-item">
+            <span class="blend-shapes-label">Eye Separation Ratio: ${eye_separation_ratio.toFixed(3)} (${rating})</span>
+        </li>
+        `;
+    }
+
+    let lastVideoTime = -1;
+    let results = undefined;
+    const drawingUtils = new DrawingUtils(canvasCtx);
+    async function predictWebcam() {
+        const radio = video.videoHeight / video.videoWidth;
+        video.style.width = videoWidth + "px";
+        video.style.height = videoWidth * radio + "px";
+        canvasElement.style.width = videoWidth + "px";
+        canvasElement.style.height = videoWidth * radio + "px";
+        canvasElement.width = video.videoWidth;
+        canvasElement.height = video.videoHeight;
+        if (runningMode === "IMAGE") {
+            runningMode = "VIDEO";
+            await faceLandmarker.setOptions({ runningMode: runningMode });
+        }
+        let startTimeMs = performance.now();
+        if (lastVideoTime !== video.currentTime) {
+            lastVideoTime = video.currentTime;
+            results = faceLandmarker.detectForVideo(video, startTimeMs);
+        }
+        if (results.faceLandmarks) {
+            let htmlMaker = "";
+            for (const landmarks of results.faceLandmarks) {
+                htmlMaker += showAllLandmarks(landmarks);
+                htmlMaker += getFwhr(landmarks);
+                htmlMaker += getCanthalTilt(landmarks);
+                htmlMaker += getEyeSeparationRatio(landmarks);
+            }
+            if (webcamRunning === true) {
+                window.requestAnimationFrame(predictWebcam);
+                videoBlendShapes.innerHTML = htmlMaker;
+            }
+        }
+    }
+  </script>
+</head>
+<body>
+    <div id="liveView" class="videoView">
+      <div style="position: relative;">
+        <video id="webcam" style="position: abso" autoplay playsinline></video>
+        <canvas class="output_canvas" id="output_canvas" style="position: absolute; left: 0px; top: 0px;"></canvas>
+      </div>
+    </div>
+    <div class="blend-shapes">
+      <ul class="blend-shapes-list" id="video-blend-shapes"></ul>
+    </div>
+  </section>
+</body>
+</html>
